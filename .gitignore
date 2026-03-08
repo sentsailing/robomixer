@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data (large files)
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.ogg
+*.parquet
+*.db
+
+# Robomixer data directories
+robomixer-data/
+dj-sets/
+
+# Environment
+.env
+.env.local
+
+# Claude
+.claude/memory/
+
+# OS
+.DS_Store
+Thumbs.db

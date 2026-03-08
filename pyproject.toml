@@ -1,0 +1,104 @@
+[project]
+name = "robomixer"
+version = "0.1.0"
+description = "AI-powered DJ transition detection and mixing"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    # Audio I/O and effects
+    "pedalboard>=0.9",
+    "soundfile>=0.12",
+
+    # Audio analysis
+    "librosa>=0.10",
+    "essentia>=2.1b6",
+    "allin1>=1.1",
+
+    # Source separation
+    "demucs>=4.0",
+
+    # Voice activity detection
+    "silero-vad>=5.1",
+
+    # Audio fingerprinting
+    "pyacoustid>=1.3",
+
+    # ML framework
+    "torch>=2.0",
+    "numpy>=1.24",
+
+    # Vector search
+    "faiss-cpu>=1.7",
+
+    # Data storage
+    "polars>=1.0",
+
+    # API
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+
+    # CLI
+    "typer>=0.12",
+    "rich>=13.0",
+
+    # Audio metadata
+    "tinytag>=1.10",
+
+    # Config
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+
+    # YouTube scraping
+    "yt-dlp>=2024.0",
+
+    # Web scraping (tracklists)
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+
+    # Change point detection
+    "ruptures>=1.1",
+
+    # Task queue
+    "rq>=1.16",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3",
+    "mypy>=1.8",
+    "ipykernel>=6.29",
+]
+gpu = [
+    "faiss-gpu>=1.7",
+]
+
+[project.scripts]
+robomixer = "robomixer.cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/robomixer"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
