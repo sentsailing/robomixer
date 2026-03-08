@@ -38,6 +38,9 @@ def _get_pipeline() -> AnalysisPipeline:
     return _pipeline
 
 
+_use_cloud = False
+
+
 def _run_analysis(song: Song) -> None:
     """Run the full analysis pipeline for a song and store all results."""
     pipeline = _get_pipeline()
@@ -47,9 +50,10 @@ def _run_analysis(song: Song) -> None:
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Running analysis pipeline...", total=None)
+        label = "Running analysis pipeline (cloud GPU)..." if _use_cloud else "Running analysis pipeline..."
+        task = progress.add_task(label, total=None)
 
-        analysis = pipeline.analyze(song)
+        analysis = pipeline.analyze(song, cloud=_use_cloud)
         progress.update(task, description="Storing analysis results...")
 
         db.insert_analysis(analysis)
@@ -125,12 +129,25 @@ def _import_single(path: Path) -> Song | None:
     return song
 
 
+def _apply_fast_mode() -> None:
+    """Configure settings for fast analysis (skip source separation)."""
+    settings.skip_separation = True
+
+
 @app.command()
 def import_song(
     path: Path = typer.Argument(..., help="Path to audio file to import"),
     skip_analysis: bool = typer.Option(False, "--skip-analysis", help="Import without running analysis"),
+    fast: bool = typer.Option(False, "--fast", help="Fast mode: skip source separation (~10x faster)"),
+    cloud: bool = typer.Option(False, "--cloud", help="Use Modal cloud GPU for source separation + vocal detection"),
 ) -> None:
     """Import a song into the library and run analysis."""
+    global _use_cloud
+    if cloud:
+        _use_cloud = True
+    if fast:
+        _apply_fast_mode()
+
     if not path.exists():
         console.print(f"[red]File not found: {path}[/red]")
         raise typer.Exit(1)
@@ -157,8 +174,16 @@ def import_dir(
     directory: Path = typer.Argument(..., help="Directory of audio files to import"),
     recursive: bool = typer.Option(False, "--recursive", "-r", help="Scan subdirectories"),
     skip_analysis: bool = typer.Option(False, "--skip-analysis", help="Import without running analysis"),
+    fast: bool = typer.Option(False, "--fast", help="Fast mode: skip source separation (~10x faster)"),
+    cloud: bool = typer.Option(False, "--cloud", help="Use Modal cloud GPU for source separation + vocal detection"),
 ) -> None:
     """Batch-import all audio files from a directory."""
+    global _use_cloud
+    if cloud:
+        _use_cloud = True
+    if fast:
+        _apply_fast_mode()
+
     if not directory.is_dir():
         console.print(f"[red]Not a directory: {directory}[/red]")
         raise typer.Exit(1)
@@ -301,6 +326,74 @@ def library() -> None:
         )
 
     console.print(table)
+
+
+@app.command()
+def deploy_cloud() -> None:
+    """Deploy the robomixer-gpu Modal app for cloud analysis."""
+    from robomixer.analysis.cloud import deploy_modal_app
+
+    console.print("Deploying robomixer-gpu Modal app...")
+    try:
+        deploy_modal_app()
+        console.print("[green]Modal app deployed. Use --cloud with import commands.[/green]")
+    except Exception as e:
+        console.print(f"[red]Deploy failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def scrape(
+    query: str = typer.Argument(..., help="Search query (e.g. 'EDM songs', 'trance 2024')"),
+    max_results: int = typer.Option(20, "--max", "-n", help="Max number of videos to download"),
+    analyze_after: bool = typer.Option(True, "--analyze/--no-analyze", help="Run analysis after download"),
+    fast: bool = typer.Option(True, "--fast/--no-fast", help="Use fast analysis (skip source separation)"),
+    cloud: bool = typer.Option(False, "--cloud", help="Use Modal cloud GPU for analysis"),
+    output_dir: Path = typer.Option(None, "--output", "-o", help="Output directory for downloads"),
+) -> None:
+    """Scrape songs from YouTube, download as audio, and import into library."""
+    global _use_cloud
+    if cloud:
+        _use_cloud = True
+    if fast:
+        _apply_fast_mode()
+
+    from robomixer.training.youtube import YouTubeScraper
+
+    download_dir = output_dir or settings.youtube_download_dir
+    download_dir.mkdir(parents=True, exist_ok=True)
+    scraper = YouTubeScraper(download_dir=download_dir)
+
+    console.print(f"Searching YouTube for: [bold]{query}[/bold] (max {max_results})...")
+    results = scraper.search_sets(query, max_results=max_results)
+    if not results:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    console.print(f"Found [bold]{len(results)}[/bold] results. Downloading...")
+
+    downloaded = 0
+    for i, result in enumerate(results, 1):
+        title = result.get("title", "Unknown")
+        url = result["url"]
+        console.print(f"\n[{i}/{len(results)}] {title}")
+        try:
+            dj_set = scraper.download_set(url)
+            audio_path = Path(dj_set.audio_path)
+            console.print(f"  [green]Downloaded:[/green] {audio_path.name}")
+            downloaded += 1
+
+            if analyze_after and audio_path.exists():
+                song = _import_single(audio_path)
+                if song:
+                    try:
+                        _run_analysis(song)
+                    except Exception as e:
+                        console.print(f"  [red]Analysis failed: {e}[/red]")
+        except Exception as e:
+            console.print(f"  [red]Download failed: {e}[/red]")
+
+    console.print(f"\n[green]Downloaded {downloaded}/{len(results)} tracks.[/green]")
 
 
 @app.command()

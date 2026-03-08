@@ -89,7 +89,19 @@ class AnalysisPipeline:
         """Defer heavy imports until first use."""
         if self._initialized:
             return
-        self._load_demucs_model()
+        if settings.skip_separation:
+            logger.info("Source separation disabled via config")
+            self._demucs_model = None
+            self._demucs_device = "cpu"
+        else:
+            try:
+                self._load_demucs_model()
+            except Exception as e:
+                logger.warning(
+                    "Failed to load demucs model: %s. Source separation will be skipped.", e
+                )
+                self._demucs_model = None
+                self._demucs_device = "cpu"
         self._initialized = True
 
     def _load_demucs_model(self) -> None:
@@ -106,8 +118,12 @@ class AnalysisPipeline:
         self._demucs_device = device
         self._demucs_model.to(device)
 
-    def analyze(self, song: Song) -> SongAnalysis:
+    def analyze(self, song: Song, cloud: bool = False) -> SongAnalysis:
         """Run full analysis pipeline on a song.
+
+        Args:
+            song: Song to analyze.
+            cloud: If True, offload demucs + VAD to a Modal cloud GPU.
 
         Returns a SongAnalysis with all extracted features populated.
         """
@@ -118,11 +134,27 @@ class AnalysisPipeline:
         # Step 1: Load audio
         audio, sr = self._load_audio(song.file_path)
 
-        # Step 2: Source separation
-        stems = self._separate_stems(audio, sr)
+        # Step 2: Source separation + vocal detection
+        stems: dict[str, NDArray[np.float32]] = {}
+        cloud_vocal_regions: list[dict] | None = None
 
-        # Step 3: Beat/structure analysis (allin1 needs the file path)
-        analysis = self._analyze_structure(song.file_path, analysis)
+        if cloud:
+            # Offload to cloud GPU
+            from robomixer.analysis.cloud import run_cloud_separation
+
+            stems, cloud_vocal_regions = run_cloud_separation(song.file_path)
+            logger.info("Cloud separation complete: %d stems", len(stems))
+        elif self._demucs_model is not None:
+            stems = self._separate_stems(audio, sr)
+        else:
+            logger.info("Skipping source separation (demucs not available)")
+
+        # Step 3: Beat/structure analysis
+        try:
+            analysis = self._analyze_structure(song.file_path, analysis)
+        except Exception as e:
+            logger.warning("allin1 structure analysis failed: %s. Falling back to librosa.", e)
+            analysis = self._analyze_structure_fallback(audio, sr, analysis)
 
         # Step 4: Key detection
         analysis = self._detect_key(audio, sr, analysis)
@@ -131,6 +163,16 @@ class AnalysisPipeline:
         analysis = self._extract_spectral(audio, sr, analysis)
 
         # Step 6: Vocal activity detection
+        if cloud_vocal_regions is not None:
+            # Use vocal regions from cloud processing
+            from robomixer.models.song import VocalRegion
+
+            analysis.vocal_regions = [
+                VocalRegion(start=r["start"], end=r["end"]) for r in cloud_vocal_regions
+            ]
+            logger.info("VAD (cloud): %d vocal regions", len(analysis.vocal_regions))
+        else:
+            # Run locally (requires vocal stem from demucs)
         analysis = self._detect_vocals(stems.get("vocals"), sr, analysis)
 
         return analysis
@@ -243,6 +285,40 @@ class AnalysisPipeline:
             len(analysis.beat_times),
             len(analysis.downbeat_times),
             len(analysis.segments),
+        )
+        return analysis
+
+    def _analyze_structure_fallback(
+        self, audio: NDArray[np.float32], sr: int, analysis: SongAnalysis
+    ) -> SongAnalysis:
+        """Fallback beat/tempo analysis using librosa when allin1 is unavailable."""
+        import librosa
+
+        tempo, beat_frames = librosa.beat.beat_track(y=audio, sr=sr)
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+
+        # Estimate downbeats as every 4th beat
+        downbeat_times = [float(beat_times[i]) for i in range(0, len(beat_times), 4)]
+
+        analysis.bpm = float(tempo[0]) if hasattr(tempo, '__len__') else float(tempo)
+        analysis.beat_times = [float(t) for t in beat_times]
+        analysis.downbeat_times = downbeat_times
+
+        # No structural segments from librosa — create a simple intro/body/outro split
+        from robomixer.models.song import SegmentLabel, SongSegment
+
+        duration = len(audio) / sr
+        analysis.segments = [
+            SongSegment(label=SegmentLabel.INTRO, start=0.0, end=duration * 0.1),
+            SongSegment(label=SegmentLabel.VERSE, start=duration * 0.1, end=duration * 0.85),
+            SongSegment(label=SegmentLabel.OUTRO, start=duration * 0.85, end=duration),
+        ]
+
+        logger.info(
+            "Structure (librosa fallback): %.1f BPM, %d beats, %d downbeats",
+            analysis.bpm,
+            len(analysis.beat_times),
+            len(analysis.downbeat_times),
         )
         return analysis
 

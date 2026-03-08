@@ -39,8 +39,8 @@ class YouTubeScraper:
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": "wav",
-                    "preferredquality": "0",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "320",
                 }
             ],
             "outtmpl": output_template,
@@ -50,7 +50,7 @@ class YouTubeScraper:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
-        audio_path = str(self.download_dir / f"{info['id']}.wav")
+        audio_path = str(self.download_dir / f"{info['id']}.mp3")
 
         return DJSet(
             source_url=url,

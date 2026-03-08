@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     # Audio analysis
     sample_rate: int = 44100
     demucs_model: str = "htdemucs"
-    demucs_device: str = "cuda"  # "cuda" or "cpu"
+    demucs_device: str = "cpu"  # "cuda" or "cpu"
+    skip_separation: bool = False  # skip demucs entirely for fast analysis
 
     # Transition point extraction
     exit_region_pct: float = 0.75  # candidate exits in last 25% of song
